@@ -9,6 +9,7 @@ import {
   GripVertical, Plus, Loader2, Layout, Inbox, Trash2, X,
   Search, CalendarDays, MessageSquare, Activity,
   Send, Clock, AlertCircle, CheckCircle2, BarChart3, Palette, Filter,
+  Users, UserPlus, UserMinus,
 } from 'lucide-react'
 import { supabase } from './supabase'
 
@@ -43,6 +44,12 @@ interface ActivityLogEntry {
 }
 
 interface Label {
+  id: string
+  name: string
+  color: string
+}
+
+interface TeamMember {
   id: string
   name: string
   color: string
@@ -124,11 +131,15 @@ function PriorityBadge({ priority }: { priority: string }) {
 }
 
 /* ---- Avatar Circle ---- */
-function AvatarCircle({ name, size = 'sm' }: { name: string; size?: 'sm' | 'md' }) {
+function AvatarCircle({ name, color, size = 'sm' }: { name: string; color?: string; size?: 'sm' | 'md' }) {
   const cls = size === 'md' ? 'h-8 w-8 text-xs' : 'h-5 w-5 text-[9px]'
+  // Use explicit color (from team_members) or fallback to hash-based
+  const bgStyle = color ? { backgroundColor: color } : {}
+  const bgClass = color ? '' : getAvatarColor(name)
   return (
     <div
-      className={`${cls} ${getAvatarColor(name)} rounded-full flex items-center justify-center text-white font-bold shrink-0`}
+      className={`${cls} ${bgClass} rounded-full flex items-center justify-center text-white font-bold shrink-0`}
+      style={bgStyle}
       title={name}
     >
       {getInitials(name)}
@@ -148,10 +159,86 @@ function LabelBadge({ label }: { label: Label }) {
   )
 }
 
+/* ---- Team Management Modal ---- */
+function TeamModal({
+  teamMembers, onClose, onAddMember, onRemoveMember,
+}: {
+  teamMembers: TeamMember[]
+  onClose: () => void
+  onAddMember: (name: string, color: string) => Promise<void>
+  onRemoveMember: (id: string) => Promise<void>
+}) {
+  const [name, setName] = useState('')
+  const [color, setColor] = useState('#6366f1')
+
+  const handleAdd = async () => {
+    if (!name.trim()) return
+    await onAddMember(name.trim(), color)
+    setName('')
+    setColor('#6366f1')
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/20 backdrop-blur-sm z-40" onClick={onClose} />
+      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-md bg-white rounded-2xl shadow-2xl z-50 animate-slide-in">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+          <div className="flex items-center gap-2">
+            <Users className="h-4 w-4 text-indigo-600" />
+            <span className="text-sm font-semibold text-slate-800">Team Members</span>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          {/* Add member form */}
+          <div className="flex items-center gap-2">
+            <input type="color" value={color} onChange={(e) => setColor(e.target.value)} className="h-9 w-9 rounded border-0 cursor-pointer bg-transparent p-0 shrink-0" />
+            <input
+              type="text" value={name} onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
+              placeholder="Member name…"
+              className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-400"
+            />
+            <button onClick={handleAdd} disabled={!name.trim()} className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 transition-colors disabled:opacity-50">
+              <UserPlus className="h-3.5 w-3.5" /> Add
+            </button>
+          </div>
+
+          {/* Members list */}
+          <div className="space-y-2 max-h-64 overflow-y-auto">
+            {teamMembers.length === 0 ? (
+              <p className="text-sm text-slate-400 text-center py-6">No team members yet</p>
+            ) : (
+              teamMembers.map(m => (
+                <div key={m.id} className="flex items-center justify-between rounded-lg bg-slate-50 px-3 py-2.5 group">
+                  <div className="flex items-center gap-2.5">
+                    <AvatarCircle name={m.name} color={m.color} size="md" />
+                    <span className="text-sm font-medium text-slate-700">{m.name}</span>
+                  </div>
+                  <button
+                    onClick={() => onRemoveMember(m.id)}
+                    className="p-1.5 rounded-md text-slate-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"
+                  >
+                    <UserMinus className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
 /* ---- Search & Summary Bar ---- */
 function SearchSummaryBar({
   searchTerm, onSearchChange,
   allLabels, selectedLabelId, onSelectLabel,
+  teamMembers,
   totalTasks, completedTasks, overdueTasks,
 }: {
   searchTerm: string
@@ -159,6 +246,7 @@ function SearchSummaryBar({
   allLabels: Label[]
   selectedLabelId: string | null
   onSelectLabel: (id: string | null) => void
+  teamMembers: TeamMember[]
   totalTasks: number
   completedTasks: number
   overdueTasks: number
@@ -166,7 +254,7 @@ function SearchSummaryBar({
   return (
     <div className="bg-white border-b border-slate-200/60 px-8 py-3">
       <div className="max-w-[1440px] mx-auto space-y-3">
-        {/* Row 1: Search + Stats */}
+        {/* Row 1: Search + Team Avatars + Stats */}
         <div className="flex items-center justify-between gap-6">
           <div className="relative flex-1 max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
@@ -178,6 +266,22 @@ function SearchSummaryBar({
               className="w-full rounded-lg border border-slate-200 bg-slate-50/80 pl-9 pr-3 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-400 transition-all"
             />
           </div>
+
+          {/* Team Avatars */}
+          {teamMembers.length > 0 && (
+            <div className="flex items-center">
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mr-2">Team</span>
+              <div className="flex -space-x-1.5">
+                {teamMembers.slice(0, 8).map(m => (
+                  <AvatarCircle key={m.id} name={m.name} color={m.color} size="sm" />
+                ))}
+                {teamMembers.length > 8 && (
+                  <div className="h-5 w-5 rounded-full bg-slate-300 flex items-center justify-center text-[8px] font-bold text-white">+{teamMembers.length - 8}</div>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5">
               <BarChart3 className="h-3.5 w-3.5 text-slate-500" />
@@ -231,7 +335,7 @@ function SearchSummaryBar({
 
 /* ---- Task Detail Panel (Slide-over) ---- */
 function TaskDetailPanel({
-  task, allLabels, taskLabels, comments, activityLog,
+  task, allLabels, taskLabels, comments, activityLog, teamMembers,
   onClose, onUpdateTask, onAddComment, onToggleLabel, onDeleteTask, onCreateLabel,
 }: {
   task: Task
@@ -239,6 +343,7 @@ function TaskDetailPanel({
   taskLabels: Label[]
   comments: Comment[]
   activityLog: ActivityLogEntry[]
+  teamMembers: TeamMember[]
   onClose: () => void
   onUpdateTask: (id: string, updates: Partial<Task>) => Promise<void>
   onAddComment: (taskId: string, text: string) => Promise<void>
@@ -249,7 +354,6 @@ function TaskDetailPanel({
   const [title, setTitle]             = useState(task.title)
   const [description, setDescription] = useState(task.description ?? '')
   const [priority, setPriority]       = useState(task.priority ?? '')
-  const [assignee, setAssignee]       = useState(task.assignee_name ?? '')
   const [dueDate, setDueDate]         = useState(task.due_date?.split('T')[0] ?? '')
   const [commentText, setCommentText] = useState('')
   const [activeTab, setActiveTab]     = useState<'comments' | 'activity'>('comments')
@@ -263,7 +367,6 @@ function TaskDetailPanel({
     setTitle(task.title)
     setDescription(task.description ?? '')
     setPriority(task.priority ?? '')
-    setAssignee(task.assignee_name ?? '')
     setDueDate(task.due_date?.split('T')[0] ?? '')
   }, [task])
 
@@ -363,14 +466,19 @@ function TaskDetailPanel({
             </div>
             <div>
               <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 block">Assignee</label>
-              <input
-                type="text"
-                value={assignee}
-                onChange={(e) => setAssignee(e.target.value)}
-                onBlur={() => assignee.trim() !== (task.assignee_name ?? '') && save('assignee_name', assignee.trim() || null)}
-                placeholder="Assign to…"
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-400"
-              />
+              <select
+                value={task.assignee_name ?? ''}
+                onChange={(e) => {
+                  const selectedMember = teamMembers.find(m => m.name === e.target.value)
+                  onUpdateTask(task.id, { assignee_name: selectedMember?.name || null })
+                }}
+                className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-400"
+              >
+                <option value="">Unassigned</option>
+                {teamMembers.map(m => (
+                  <option key={m.id} value={m.name}>{m.name}</option>
+                ))}
+              </select>
             </div>
           </div>
 
@@ -552,12 +660,14 @@ export default function App() {
   const [tasks, setTasks]                 = useState<Task[]>([])
   const [allLabels, setAllLabels]         = useState<Label[]>([])
   const [taskLabelsMap, setTaskLabelsMap] = useState<Record<string, Label[]>>({})
+  const [teamMembers, setTeamMembers]     = useState<TeamMember[]>([])
   const [userId, setUserId]               = useState<string | null>(null)
   const [isLoading, setIsLoading]         = useState(true)
   const [isAdding, setIsAdding]           = useState(false)
   const [newTaskTitle, setNewTaskTitle]   = useState('')
   const [searchTerm, setSearchTerm]       = useState('')
   const [selectedLabelId, setSelectedLabelId] = useState<string | null>(null)
+  const [showTeamModal, setShowTeamModal] = useState(false)
 
   // Detail panel
   const [selectedTaskId, setSelectedTaskId]   = useState<string | null>(null)
@@ -607,6 +717,7 @@ export default function App() {
             fetchTasks(user.id),
             fetchLabels(),
             fetchAllTaskLabels(),
+            fetchTeamMembers(),
           ])
         }
       } catch (err) {
@@ -643,6 +754,24 @@ export default function App() {
     }
     setTaskLabelsMap(map)
   }
+
+  const fetchTeamMembers = async () => {
+    const { data, error } = await supabase.from('team_members').select('*').order('name', { ascending: true })
+    if (error) { console.error('Fetch team_members:', error); return }
+    setTeamMembers((data ?? []) as TeamMember[])
+  }
+
+  const addTeamMember = useCallback(async (name: string, color: string) => {
+    const { data, error } = await supabase.from('team_members').insert([{ name, color }]).select()
+    if (error) { console.error('Add team member:', error); return }
+    if (data && data.length > 0) setTeamMembers(prev => [...prev, data[0] as TeamMember])
+  }, [])
+
+  const removeTeamMember = useCallback(async (id: string) => {
+    setTeamMembers(prev => prev.filter(m => m.id !== id))
+    const { error } = await supabase.from('team_members').delete().eq('id', id)
+    if (error) { console.error('Remove team member:', error); fetchTeamMembers() }
+  }, [])
 
   const fetchTaskDetail = async (taskId: string) => {
     const [commentsRes, activityRes] = await Promise.all([
@@ -694,7 +823,7 @@ export default function App() {
     if (updates.status)        logs.push(`Status changed to "${updates.status}"`)
     if (updates.priority)      logs.push(`Priority set to "${updates.priority}"`)
     if (updates.title)         logs.push('Title updated')
-    if (updates.assignee_name !== undefined) logs.push(updates.assignee_name ? `Assigned to "${updates.assignee_name}"` : 'Assignee removed')
+    if (updates.assignee_name !== undefined) logs.push(updates.assignee_name ? `Assigned to "${updates.assignee_name}"` : 'Unassigned')
     if (updates.due_date !== undefined) logs.push(updates.due_date ? `Due date set to ${formatDate(updates.due_date)}` : 'Due date removed')
 
     for (const action of logs) {
@@ -801,19 +930,27 @@ export default function App() {
               <p className="text-[13px] text-slate-400 mt-0.5">Manage your workflow</p>
             </div>
           </div>
-          <form onSubmit={addTask} className="flex items-center gap-2.5">
-            <input
-              type="text" value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)}
-              placeholder="What needs to be done?" disabled={isAdding}
-              className="w-72 rounded-lg border border-slate-200 bg-slate-50/80 px-3.5 py-2 text-sm text-slate-700 placeholder:text-slate-400 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-400 disabled:opacity-60"
-            />
-            <button type="submit" disabled={!newTaskTitle.trim() || isAdding}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all duration-200 hover:bg-indigo-700 hover:shadow-md active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed"
+          <div className="flex items-center gap-2.5">
+            <button
+              onClick={() => setShowTeamModal(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 hover:border-slate-300 transition-all"
             >
-              {isAdding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-              Add Task
+              <Users className="h-4 w-4" /> Team
             </button>
-          </form>
+            <form onSubmit={addTask} className="flex items-center gap-2.5">
+              <input
+                type="text" value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)}
+                placeholder="What needs to be done?" disabled={isAdding}
+                className="w-64 rounded-lg border border-slate-200 bg-slate-50/80 px-3.5 py-2 text-sm text-slate-700 placeholder:text-slate-400 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-400 disabled:opacity-60"
+              />
+              <button type="submit" disabled={!newTaskTitle.trim() || isAdding}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-all duration-200 hover:bg-indigo-700 hover:shadow-md active:scale-[0.97] disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isAdding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                Add Task
+              </button>
+            </form>
+          </div>
         </div>
       </header>
 
@@ -821,6 +958,7 @@ export default function App() {
       <SearchSummaryBar
         searchTerm={searchTerm} onSearchChange={setSearchTerm}
         allLabels={allLabels} selectedLabelId={selectedLabelId} onSelectLabel={setSelectedLabelId}
+        teamMembers={teamMembers}
         totalTasks={filteredTasks.length} completedTasks={completedCount} overdueTasks={overdueCount}
       />
 
@@ -896,7 +1034,10 @@ export default function App() {
                                           </span>
                                         )}
                                         {labels.map(l => <LabelBadge key={l.id} label={l} />)}
-                                        {task.assignee_name && <AvatarCircle name={task.assignee_name} />}
+                                        {task.assignee_name && (() => {
+                                          const member = teamMembers.find(m => m.name === task.assignee_name)
+                                          return <AvatarCircle name={task.assignee_name} color={member?.color} />
+                                        })()}
                                       </div>
                                     )}
                                   </div>
@@ -932,12 +1073,23 @@ export default function App() {
           taskLabels={taskLabelsMap[selectedTask.id] ?? []}
           comments={detailComments}
           activityLog={detailActivity}
+          teamMembers={teamMembers}
           onClose={() => setSelectedTaskId(null)}
           onUpdateTask={updateTask}
           onAddComment={addComment}
           onToggleLabel={toggleLabel}
           onDeleteTask={deleteTask}
           onCreateLabel={createLabel}
+        />
+      )}
+
+      {/* ──── Team Modal ──── */}
+      {showTeamModal && (
+        <TeamModal
+          teamMembers={teamMembers}
+          onClose={() => setShowTeamModal(false)}
+          onAddMember={addTeamMember}
+          onRemoveMember={removeTeamMember}
         />
       )}
     </div>
