@@ -336,7 +336,7 @@ function SearchSummaryBar({
 /* ---- Task Detail Panel (Slide-over) ---- */
 function TaskDetailPanel({
   task, allLabels, taskLabels, comments, activityLog, teamMembers,
-  onClose, onUpdateTask, onAddComment, onToggleLabel, onDeleteTask, onCreateLabel,
+  onClose, onUpdateTask, onAddComment, onToggleLabel, onDeleteTask, onCreateLabel, onDeleteLabel,
 }: {
   task: Task
   allLabels: Label[]
@@ -350,6 +350,7 @@ function TaskDetailPanel({
   onToggleLabel: (taskId: string, labelId: string, assigned: boolean) => Promise<void>
   onDeleteTask: (taskId: string) => void
   onCreateLabel: (name: string, color: string) => Promise<void>
+  onDeleteLabel: (id: string) => Promise<void>
 }) {
   const [title, setTitle]             = useState(task.title)
   const [description, setDescription] = useState(task.description ?? '')
@@ -533,20 +534,35 @@ function TaskDetailPanel({
               </div>
             )}
 
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 mt-1">
               {allLabels.map(label => {
                 const on = taskLabelIds.has(label.id)
                 return (
-                  <button
-                    key={label.id}
-                    onClick={() => onToggleLabel(task.id, label.id, on)}
-                    className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold transition-all duration-150 border-2 ${
-                      on ? 'text-white border-transparent' : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
-                    }`}
-                    style={on ? { backgroundColor: label.color, borderColor: label.color } : {}}
-                  >
-                    {label.name}
-                  </button>
+                  <div key={label.id} className="relative group flex items-center pr-1.5 pt-1.5">
+                    <button
+                      onClick={() => onToggleLabel(task.id, label.id, on)}
+                      className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold transition-all duration-150 border-2 ${
+                        on ? 'text-white border-transparent' : 'bg-white border-slate-200 text-slate-500 hover:border-slate-300'
+                      }`}
+                      style={on ? { backgroundColor: label.color, borderColor: label.color } : {}}
+                    >
+                      {label.name}
+                    </button>
+                    {showLabelForm && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          if (window.confirm(`Delete label "${label.name}"? This removes it from all tasks.`)) {
+                            onDeleteLabel(label.id)
+                          }
+                        }}
+                        className="absolute top-0 right-0 h-4 w-4 bg-slate-100 hover:bg-red-100 text-slate-400 hover:text-red-500 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity border border-slate-200 shadow-sm"
+                        title="Delete Label"
+                      >
+                        <X className="h-2.5 w-2.5" />
+                      </button>
+                    )}
+                  </div>
                 )
               })}
               {allLabels.length === 0 && !showLabelForm && <span className="text-xs text-slate-400">No labels — click Manage to create one</span>}
@@ -870,6 +886,28 @@ export default function App() {
     }
   }, [])
 
+  const deleteLabel = useCallback(async (id: string) => {
+    // Optimistic UI updates
+    setAllLabels(prev => prev.filter(l => l.id !== id))
+    setTaskLabelsMap(prev => {
+      const next = { ...prev }
+      for (const taskId in next) {
+        next[taskId] = next[taskId].filter(l => l.id !== id)
+      }
+      return next
+    })
+    setSelectedLabelId(prev => prev === id ? null : prev)
+    
+    // DB delete: Sequential deletion to handle foreign key constraints
+    // First, remove all associations in the join table
+    const { error: cascadeError } = await supabase.from('task_labels').delete().eq('label_id', id)
+    if (cascadeError) console.error('Delete task_labels (cascade) error:', cascadeError)
+
+    // Then, remove the label itself
+    const { error } = await supabase.from('labels').delete().eq('id', id)
+    if (error) { console.error('Delete label error:', error) }
+  }, [])
+
   /* -------- Drag & Drop -------- */
 
   const onDragEnd = async (result: DropResult) => {
@@ -1080,6 +1118,7 @@ export default function App() {
           onToggleLabel={toggleLabel}
           onDeleteTask={deleteTask}
           onCreateLabel={createLabel}
+          onDeleteLabel={deleteLabel}
         />
       )}
 
