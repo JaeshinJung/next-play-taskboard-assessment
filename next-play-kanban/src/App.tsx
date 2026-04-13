@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import {
   DragDropContext,
   Droppable,
@@ -705,7 +705,7 @@ export default function App() {
     const init = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession()
-        let user = session?.user
+        let user = session?.user ?? null
         if (!user) {
           const { data, error } = await supabase.auth.signInAnonymously()
           if (error) throw error
